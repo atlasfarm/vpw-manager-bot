@@ -1,8 +1,15 @@
-from telegram import Update, ChatPermissions
+from telegram import (
+    Update,
+    ChatPermissions,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup
+)
+
 from telegram.ext import (
     ApplicationBuilder,
     CommandHandler,
     MessageHandler,
+    CallbackQueryHandler,
     ContextTypes,
     filters,
 )
@@ -16,6 +23,7 @@ from collections import defaultdict, deque
 # =========================
 
 TOKEN = os.getenv("BOT_TOKEN")
+
 OWNER_ID = 8615034394
 
 GROUPS = {
@@ -37,15 +45,14 @@ GROUPS = {
 SPAM_LIMIT = 8
 TIME_WINDOW = 10
 
-# user_id -> deque[(timestamp, msg_id, chat_id)]
+# Simpan sehingga 200 mesej setiap user
 user_messages = defaultdict(lambda: deque(maxlen=200))
-
 
 # =========================
 # HELPERS
 # =========================
 
-def is_owner(user_id: int) -> bool:
+def is_owner(user_id):
     return user_id == OWNER_ID
 
 
@@ -68,21 +75,95 @@ async def open_group(bot, group_id):
 
 
 # =========================
+# MENU
+# =========================
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not is_owner(update.effective_user.id):
+        return
+
+    keyboard = [
+        [InlineKeyboardButton("📊 Status", callback_data="status")],
+        [
+            InlineKeyboardButton("🔓 Open All", callback_data="openall"),
+            InlineKeyboardButton("🔒 Close All", callback_data="closeall")
+        ]
+    ]
+
+    await update.message.reply_text(
+        "🤖 VPW Manager Control Panel",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.callback_query
+    await query.answer()
+
+    if query.from_user.id != OWNER_ID:
+        return
+
+    if query.data == "status":
+
+        await query.message.reply_text(
+            f"🤖 VPW Manager Online\n\n"
+            f"📊 Total Groups : {len(GROUPS)}\n"
+            f"🛡 Anti Spam : {SPAM_LIMIT} mesej / {TIME_WINDOW} saat"
+        )
+
+    elif query.data == "openall":
+
+        success = 0
+
+        for gid in GROUPS.values():
+            try:
+                await open_group(context.bot, gid)
+                success += 1
+            except Exception as e:
+                print("OPEN ERROR:", e)
+
+        await query.message.reply_text(
+            f"🔓 Semua group dibuka.\n"
+            f"✅ {success}/{len(GROUPS)} berjaya."
+        )
+
+    elif query.data == "closeall":
+
+        success = 0
+
+        for gid in GROUPS.values():
+            try:
+                await close_group(context.bot, gid)
+                success += 1
+            except Exception as e:
+                print("CLOSE ERROR:", e)
+
+        await query.message.reply_text(
+            f"🔒 Semua group ditutup.\n"
+            f"✅ {success}/{len(GROUPS)} berjaya."
+        )
+
+
+# =========================
 # COMMANDS
 # =========================
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     if not is_owner(update.effective_user.id):
         return
 
     await update.message.reply_text(
-        f"🤖 VPW Manager Online\n"
-        f"📊 Total Groups: {len(GROUPS)}\n"
-        f"🛡 Anti Spam: {SPAM_LIMIT} mesej / {TIME_WINDOW} saat"
+        f"🤖 VPW Manager Online\n\n"
+        f"📊 Total Groups : {len(GROUPS)}\n"
+        f"🛡 Anti Spam : {SPAM_LIMIT} mesej / {TIME_WINDOW} saat"
     )
 
 
 async def openall(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     if not is_owner(update.effective_user.id):
         return
 
@@ -96,11 +177,13 @@ async def openall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print("OPEN ERROR:", e)
 
     await update.message.reply_text(
-        f"🔓 Semua group dibuka.\n✅ {success}/{len(GROUPS)} berjaya."
+        f"🔓 Semua group dibuka.\n"
+        f"✅ {success}/{len(GROUPS)} berjaya."
     )
 
 
 async def closeall(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     if not is_owner(update.effective_user.id):
         return
 
@@ -114,54 +197,9 @@ async def closeall(update: Update, context: ContextTypes.DEFAULT_TYPE):
             print("CLOSE ERROR:", e)
 
     await update.message.reply_text(
-        f"🔒 Semua group ditutup.\n✅ {success}/{len(GROUPS)} berjaya."
+        f"🔒 Semua group ditutup.\n"
+        f"✅ {success}/{len(GROUPS)} berjaya."
     )
-
-
-async def open_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_owner(update.effective_user.id):
-        return
-
-    if not context.args:
-        await update.message.reply_text(
-            "Contoh:\n/open 101"
-        )
-        return
-
-    code = context.args[0].lower()
-
-    if code not in GROUPS:
-        await update.message.reply_text("❌ Group tidak dijumpai.")
-        return
-
-    try:
-        await open_group(context.bot, GROUPS[code])
-        await update.message.reply_text(f"🔓 Group {code} dibuka.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error:\n{e}")
-
-
-async def close_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not is_owner(update.effective_user.id):
-        return
-
-    if not context.args:
-        await update.message.reply_text(
-            "Contoh:\n/close 101"
-        )
-        return
-
-    code = context.args[0].lower()
-
-    if code not in GROUPS:
-        await update.message.reply_text("❌ Group tidak dijumpai.")
-        return
-
-    try:
-        await close_group(context.bot, GROUPS[code])
-        await update.message.reply_text(f"🔒 Group {code} ditutup.")
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error:\n{e}")
 
 
 # =========================
@@ -183,13 +221,25 @@ async def anti_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
     message = update.message
 
-    # owner bypass
+    # Owner bypass
     if user.id == OWNER_ID:
         return
 
-    # private chat ignore
+    # Ignore private chat
     if update.effective_chat.type == "private":
         return
+
+    # Admin bypass
+    try:
+        member = await context.bot.get_chat_member(
+            chat_id,
+            user.id
+        )
+
+        if member.status in ["administrator", "creator"]:
+            return
+    except:
+        pass
 
     now = time.time()
 
@@ -202,21 +252,27 @@ async def anti_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if now - x[0] <= TIME_WINDOW
     ]
 
-    user_messages[user.id] = deque(recent, maxlen=30)
+    user_messages[user.id] = deque(
+        recent,
+        maxlen=200
+    )
 
     if len(recent) < SPAM_LIMIT:
         return
 
     try:
 
-        # delete spam messages
-        for _, msg_id, c_id in recent:
+        all_messages = list(user_messages[user.id])
+
+        # delete semua mesej spam yang direkod
+        for _, msg_id, c_id in all_messages:
+
             try:
                 await context.bot.delete_message(
                     chat_id=c_id,
                     message_id=msg_id
                 )
-            except Exception:
+            except:
                 pass
 
         # kick user
@@ -225,18 +281,18 @@ async def anti_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_id=user.id
         )
 
-        # unban supaya boleh join semula
+        # benarkan join semula
         await context.bot.unban_chat_member(
             chat_id=chat_id,
             user_id=user.id
         )
 
-        await context.bot.send_message(
-            chat_id=chat_id,
-            text=f"🚫 {user.first_name} dikeluarkan kerana spam."
-        )
-
         user_messages[user.id].clear()
+
+        await context.bot.send_message(
+            chat_id,
+            f"🚫 {user.first_name} dikeluarkan kerana spam."
+        )
 
     except Exception as e:
         print("ANTI SPAM ERROR:", e)
@@ -249,27 +305,34 @@ async def anti_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
 def main():
 
     if not TOKEN:
-        raise ValueError("BOT_TOKEN tidak dijumpai dalam Railway Variables.")
+        raise ValueError(
+            "BOT_TOKEN tidak dijumpai dalam Railway Variables."
+        )
 
     app = ApplicationBuilder().token(TOKEN).build()
 
+    # Menu
+    app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(button_handler))
+
+    # Commands
     app.add_handler(CommandHandler("status", status))
     app.add_handler(CommandHandler("openall", openall))
     app.add_handler(CommandHandler("closeall", closeall))
 
-    app.add_handler(CommandHandler("open", open_cmd))
-    app.add_handler(CommandHandler("close", close_cmd))
-
+    # Anti spam
     app.add_handler(
         MessageHandler(
-            filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL,
+            filters.ALL,
             anti_spam
         )
     )
 
     print("VPW Manager Bot Running...")
 
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(
+        drop_pending_updates=True
+    )
 
 
 if __name__ == "__main__":
