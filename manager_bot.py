@@ -38,7 +38,7 @@ SPAM_LIMIT = 8
 TIME_WINDOW = 10
 
 # user_id -> deque[(timestamp, msg_id, chat_id)]
-user_messages = defaultdict(lambda: deque(maxlen=30))
+user_messages = defaultdict(lambda: deque(maxlen=200))
 
 
 # =========================
