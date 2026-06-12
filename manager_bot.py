@@ -1,3 +1,4 @@
+```python
 from telegram import (
     Update,
     ChatPermissions,
@@ -44,9 +45,18 @@ GROUPS = {
 
 SPAM_LIMIT = 8
 TIME_WINDOW = 10
+MUTE_DURATION = 3600  # 1 jam
 
-# Simpan sehingga 200 mesej setiap user
-user_messages = defaultdict(lambda: deque(maxlen=200))
+# chat_id -> user_id -> deque(timestamp, message_id)
+user_messages = defaultdict(
+    lambda: defaultdict(
+        lambda: deque(maxlen=50)
+    )
+)
+
+# Elak trigger banyak kali
+cooldowns = {}
+
 
 # =========================
 # HELPERS
@@ -69,7 +79,17 @@ async def open_group(bot, group_id):
     await bot.set_chat_permissions(
         chat_id=group_id,
         permissions=ChatPermissions(
-            can_send_messages=True
+            can_send_messages=True,
+            can_send_audios=True,
+            can_send_documents=True,
+            can_send_photos=True,
+            can_send_videos=True,
+            can_send_video_notes=True,
+            can_send_voice_notes=True,
+            can_send_polls=True,
+            can_send_other_messages=True,
+            can_add_web_page_previews=True,
+            can_invite_users=True
         )
     )
 
@@ -79,6 +99,9 @@ async def open_group(bot, group_id):
 # =========================
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if not update.effective_user:
+        return
 
     if not is_owner(update.effective_user.id):
         return
@@ -100,6 +123,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
+
+    if not query:
+        return
+
     await query.answer()
 
     if query.from_user.id != OWNER_ID:
@@ -118,11 +145,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         success = 0
 
         for gid in GROUPS.values():
+
             try:
                 await open_group(context.bot, gid)
                 success += 1
+
             except Exception as e:
-                print("OPEN ERROR:", e)
+                print(f"OPEN ERROR {gid}: {e}")
 
         await query.message.reply_text(
             f"🔓 Semua group dibuka.\n"
@@ -134,11 +163,13 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         success = 0
 
         for gid in GROUPS.values():
+
             try:
                 await close_group(context.bot, gid)
                 success += 1
+
             except Exception as e:
-                print("CLOSE ERROR:", e)
+                print(f"CLOSE ERROR {gid}: {e}")
 
         await query.message.reply_text(
             f"🔒 Semua group ditutup.\n"
@@ -152,6 +183,9 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    if not update.effective_user:
+        return
+
     if not is_owner(update.effective_user.id):
         return
 
@@ -164,17 +198,22 @@ async def status(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def openall(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    if not update.effective_user:
+        return
+
     if not is_owner(update.effective_user.id):
         return
 
     success = 0
 
     for gid in GROUPS.values():
+
         try:
             await open_group(context.bot, gid)
             success += 1
+
         except Exception as e:
-            print("OPEN ERROR:", e)
+            print(f"OPEN ERROR {gid}: {e}")
 
     await update.message.reply_text(
         f"🔓 Semua group dibuka.\n"
@@ -184,17 +223,22 @@ async def openall(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def closeall(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    if not update.effective_user:
+        return
+
     if not is_owner(update.effective_user.id):
         return
 
     success = 0
 
     for gid in GROUPS.values():
+
         try:
             await close_group(context.bot, gid)
             success += 1
+
         except Exception as e:
-            print("CLOSE ERROR:", e)
+            print(f"CLOSE ERROR {gid}: {e}")
 
     await update.message.reply_text(
         f"🔒 Semua group ditutup.\n"
@@ -211,91 +255,130 @@ async def anti_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message:
         return
 
-    if not update.effective_user:
-        return
-
-    if not update.effective_chat:
-        return
-
     user = update.effective_user
-    chat_id = update.effective_chat.id
+    chat = update.effective_chat
     message = update.message
+
+    if not user or not chat:
+        return
+
+    # Ignore private chat
+    if chat.type == "private":
+        return
 
     # Owner bypass
     if user.id == OWNER_ID:
         return
 
-    # Ignore private chat
-    if update.effective_chat.type == "private":
+    # Ignore service messages
+    if (
+        message.new_chat_members or
+        message.left_chat_member or
+        message.group_chat_created or
+        message.supergroup_chat_created or
+        message.channel_chat_created or
+        message.pinned_message
+    ):
         return
 
     # Admin bypass
     try:
+
         member = await context.bot.get_chat_member(
-            chat_id,
+            chat.id,
             user.id
         )
 
-        if member.status in ["administrator", "creator"]:
+        if member.status in ("administrator", "creator"):
             return
-    except:
-        pass
+
+    except Exception:
+        return
 
     now = time.time()
 
-    user_messages[user.id].append(
-        (now, message.message_id, chat_id)
+    cooldown_key = (chat.id, user.id)
+
+    # Elak trigger banyak kali
+    if cooldown_key in cooldowns:
+
+        if now - cooldowns[cooldown_key] < 60:
+            return
+
+        del cooldowns[cooldown_key]
+
+    records = user_messages[chat.id][user.id]
+
+    records.append(
+        (
+            now,
+            message.message_id
+        )
     )
 
-    recent = [
-        x for x in user_messages[user.id]
-        if now - x[0] <= TIME_WINDOW
-    ]
-
-    user_messages[user.id] = deque(
-        recent,
-        maxlen=200
+    recent = deque(
+        [
+            msg
+            for msg in records
+            if now - msg[0] <= TIME_WINDOW
+        ],
+        maxlen=50
     )
 
+    user_messages[chat.id][user.id] = recent
+
+    # Belum capai limit
     if len(recent) < SPAM_LIMIT:
         return
 
+    cooldowns[cooldown_key] = now
+
     try:
 
-        all_messages = list(user_messages[user.id])
-
-        # delete semua mesej spam yang direkod
-        for _, msg_id, c_id in all_messages:
+        # Delete mesej spam
+        for _, msg_id in recent:
 
             try:
                 await context.bot.delete_message(
-                    chat_id=c_id,
+                    chat_id=chat.id,
                     message_id=msg_id
                 )
-            except:
+
+            except Exception:
                 pass
 
-        # kick user
-        await context.bot.ban_chat_member(
-            chat_id=chat_id,
-            user_id=user.id
+        # Mute user selama 1 jam
+        await context.bot.restrict_chat_member(
+            chat_id=chat.id,
+            user_id=user.id,
+            permissions=ChatPermissions(
+                can_send_messages=False,
+                can_send_audios=False,
+                can_send_documents=False,
+                can_send_photos=False,
+                can_send_videos=False,
+                can_send_video_notes=False,
+                can_send_voice_notes=False,
+                can_send_polls=False,
+                can_send_other_messages=False,
+                can_add_web_page_previews=False,
+                can_change_info=False,
+                can_invite_users=False,
+                can_pin_messages=False,
+            ),
+            until_date=int(now) + MUTE_DURATION
         )
 
-        # benarkan join semula
-        await context.bot.unban_chat_member(
-            chat_id=chat_id,
-            user_id=user.id
-        )
-
-        user_messages[user.id].clear()
+        user_messages[chat.id][user.id].clear()
 
         await context.bot.send_message(
-            chat_id,
-            f"🚫 {user.first_name} dikeluarkan kerana spam."
+            chat.id,
+            f"🚫 {user.mention_html()} telah dimute selama 1 jam kerana spam.",
+            parse_mode="HTML"
         )
 
     except Exception as e:
-        print("ANTI SPAM ERROR:", e)
+        print(f"ANTI SPAM ERROR: {e}")
 
 
 # =========================
@@ -320,10 +403,19 @@ def main():
     app.add_handler(CommandHandler("openall", openall))
     app.add_handler(CommandHandler("closeall", closeall))
 
-    # Anti spam
+    # Anti Spam
     app.add_handler(
         MessageHandler(
-            filters.ALL,
+            (
+                filters.TEXT |
+                filters.PHOTO |
+                filters.VIDEO |
+                filters.Document.ALL |
+                filters.Sticker.ALL |
+                filters.VOICE |
+                filters.AUDIO |
+                filters.ANIMATION
+            ) & ~filters.COMMAND,
             anti_spam
         )
     )
@@ -337,3 +429,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+```
