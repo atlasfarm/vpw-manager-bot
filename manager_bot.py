@@ -73,7 +73,11 @@ async def close_group(bot, group_id):
             can_send_messages=False
         )
     )
-
+    
+    await bot.send_message(
+        chat_id=group_id,
+        text="🔒 GROUP IS TEMPORARILY CLOSED"
+    )
 
 async def open_group(bot, group_id):
     await bot.set_chat_permissions(
@@ -91,6 +95,10 @@ async def open_group(bot, group_id):
             can_add_web_page_previews=True,
             can_invite_users=True
         )
+    )
+    await bot.send_message(
+        chat_id=group_id,
+        text="🔓 GROUP HAS BEEN OPENED"
     )
 
 
@@ -373,7 +381,7 @@ async def anti_spam(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await context.bot.send_message(
             chat.id,
-            f"🚫 {user.mention_html()} telah dimute selama 1 jam kerana spam.",
+            f"🚫 {user.mention_html()} HAS BEEN MUTED FOR 1 HOUR DUE TO SPAM",
             parse_mode="HTML"
         )
 
