@@ -1,4 +1,4 @@
-```python
+
 from telegram import (
     Update,
     ChatPermissions,
@@ -429,4 +429,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-```
+
